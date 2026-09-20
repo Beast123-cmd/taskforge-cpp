@@ -30,6 +30,17 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+## Dashboard installation (npm)
+
+TaskForge can also be installed as a local developer tool directly from this repository:
+
+```sh
+npm install -g github:Beast123-cmd/taskforge-cpp
+taskforge
+```
+
+Then open `http://localhost:4173`. The dashboard starts the real C++ engine on demand and renders its exported telemetry: dependency flow, job states, scheduler decisions, retry behavior, and measured peak concurrency. It requires Node.js 18+ and a C++17 compiler on the local machine. A registry publication can later replace the GitHub installation URL with `npm install -g taskforge-scheduler`.
+
 ## Interactive CLI
 
 `taskforge_demo` opens an interactive prompt; it does not automatically run a fixed workload. Use `help` at the prompt for the full command reference.
