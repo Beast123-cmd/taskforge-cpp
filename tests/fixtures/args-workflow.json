@@ -1,0 +1,14 @@
+{
+  "jobs": [
+    {
+      "id": "verify_literal_arguments",
+      "executable": "node",
+      "args": [
+        "-e",
+        "if (process.argv[1] !== 'text with spaces & symbols' || process.argv[2] !== '') process.exit(3); console.log('literal arguments preserved')",
+        "text with spaces & symbols",
+        ""
+      ]
+    }
+  ]
+}

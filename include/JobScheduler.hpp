@@ -36,12 +36,14 @@ class JobScheduler {
   void add(Job job);
   void start();
   void wait();
+  bool finished() const;
   void stop();
 
   Status status(const JobId& id) const;
   Job job(const JobId& id) const;
   std::vector<Job> jobs() const;
   std::vector<SchedulerEvent> events() const;
+  std::vector<SchedulerEvent> events_since(std::size_t offset) const;
   Metrics metrics() const;
   std::string summary() const;
 

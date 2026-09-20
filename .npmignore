@@ -2,4 +2,5 @@ build/
 .git/
 .DS_Store
 tests/
+.taskforge/
 *.o

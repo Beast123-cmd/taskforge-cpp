@@ -1,4 +1,5 @@
 #include "JobScheduler.hpp"
+#include "ProcessRunner.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -82,6 +83,41 @@ Job make_command_job(const std::string& id, Priority priority,
                log_task(id + " executing: " + command);
                return std::system(command.c_str()) == 0;
              }};
+}
+
+Job make_executable_job(const std::string& id, Priority priority,
+                        std::vector<JobId> dependencies, unsigned retries,
+                        std::string executable, std::vector<std::string> arguments) {
+  if (executable.empty()) throw std::invalid_argument("executable cannot be empty");
+  return Job{id, id, priority, std::move(dependencies), retries, 0, Status::Pending,
+             [id, executable = std::move(executable), arguments = std::move(arguments)] {
+               log_task(id + " launching " + executable + " (" +
+                        std::to_string(arguments.size()) + " arguments)");
+               const int exit_status = taskforge::run_executable(executable, arguments);
+               if (exit_status != 0)
+                 log_task(id + " exited with status " + std::to_string(exit_status));
+               return exit_status == 0;
+             }};
+}
+
+int hex_digit(char character) {
+  if (character >= '0' && character <= '9') return character - '0';
+  if (character >= 'a' && character <= 'f') return character - 'a' + 10;
+  if (character >= 'A' && character <= 'F') return character - 'A' + 10;
+  throw std::invalid_argument("invalid executable argument encoding");
+}
+
+std::string decode_hex(const std::string& value) {
+  if (value == "-") return {};
+  if (value.size() % 2 != 0) throw std::invalid_argument("invalid executable argument encoding");
+  std::string decoded;
+  decoded.reserve(value.size() / 2);
+  for (std::size_t index = 0; index < value.size(); index += 2)
+    decoded.push_back(static_cast<char>((hex_digit(value[index]) << 4) |
+                                         hex_digit(value[index + 1])));
+  if (decoded.find('\0') != std::string::npos)
+    throw std::invalid_argument("executable arguments cannot contain NUL bytes");
+  return decoded;
 }
 
 // A small deterministic CPU task proves jobs can execute real application work.
@@ -232,6 +268,30 @@ void export_json(const JobScheduler& scheduler, const std::string& path) {
          << ",\"retries\":" << metrics.retries << ",\"peakRunning\":" << metrics.peak_running << "}}";
 }
 
+// Machine-readable live events use a prefix so command stdout remains distinct.
+void trace_live(JobScheduler& scheduler) {
+  scheduler.start();
+  std::size_t emitted = 0;
+  do {
+    const auto events = scheduler.events_since(emitted);
+    for (const auto& event : events) {
+      std::ostringstream line;
+      line << "TFTRACE\t{\"sequence\":" << event.sequence
+           << ",\"elapsedMs\":" << event.elapsed.count()
+           << ",\"jobId\":\"" << json_escape(event.job_id)
+           << "\",\"state\":\"" << taskforge::to_string(event.status)
+           << "\",\"workerId\":" << event.worker_id
+           << ",\"message\":\"" << json_escape(event.message) << "\"}";
+      std::lock_guard<std::mutex> lock(task_log_mutex);
+      std::cout << line.str() << std::endl;
+    }
+    emitted += events.size();
+    if (scheduler.finished()) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  } while (true);
+  scheduler.wait();
+}
+
 void print_help() {
   std::cout << R"(Commands:
   demo                    Load a real-work sample pipeline (before run).
@@ -239,6 +299,8 @@ void print_help() {
                           Add a timed job; dependencies are comma-separated.
   add-command <id> <priority> <deps|-> <retries> <shell command>
                           Add a real command job that runs on a worker thread.
+  add-exec <id> <priority> <deps|-> <retries> <hex executable> [hex args...]
+                          Add a literal-argument process without a shell (used by JSON workflows).
   list                    Show a dashboard table of all jobs.
   graph                   Show dependency graph and state lifecycle.
   events                  Show the scheduler's timestamped decision audit trail.
@@ -247,6 +309,7 @@ void print_help() {
   export-json <file.json> Export real scheduler state/events for tooling.
   status <id>             Inspect one job.
   run                     Start workers, execute jobs, and show final metrics.
+  trace                   Run and emit live TFTRACE JSON events for CLI tooling.
   summary                 Show live metrics.
   learn                   Explain what the scheduler is demonstrating.
   help                    Show commands.
@@ -332,12 +395,14 @@ int main() {
       else if (command == "timeline") print_timeline(scheduler.events());
       else if (command == "export") {
         std::string path;
-        if (!(input >> path)) throw std::invalid_argument("usage: export <file.dot>");
+        std::getline(input >> std::ws, path);
+        if (path.empty()) throw std::invalid_argument("usage: export <file.dot>");
         export_dot(scheduler.jobs(), path);
       }
       else if (command == "export-json") {
         std::string path;
-        if (!(input >> path)) throw std::invalid_argument("usage: export-json <file.json>");
+        std::getline(input >> std::ws, path);
+        if (path.empty()) throw std::invalid_argument("usage: export-json <file.json>");
         export_json(scheduler, path);
         std::cout << "Wrote scheduler data to " << path << ".\n";
       }
@@ -365,11 +430,25 @@ int main() {
                                        parse_dependencies(dependency_text), retries,
                                        shell_command));
         std::cout << "Added command job '" << id << "'.\n";
+      } else if (command == "add-exec") {
+        std::string id, priority, dependency_text, encoded_executable;
+        unsigned retries;
+        if (!(input >> id >> priority >> dependency_text >> retries >> encoded_executable))
+          throw std::invalid_argument("usage: add-exec <id> <priority> <deps|-> <retries> <hex executable> [hex args...]");
+        std::vector<std::string> arguments;
+        for (std::string encoded; input >> encoded;)
+          arguments.push_back(decode_hex(encoded));
+        scheduler.add(make_executable_job(id, parse_priority(priority),
+                                          parse_dependencies(dependency_text), retries,
+                                          decode_hex(encoded_executable), std::move(arguments)));
+        std::cout << "Added executable job '" << id << "'.\n";
       } else if (command == "run") {
         scheduler.start();
         scheduler.wait();
         print_table(scheduler.jobs());
         std::cout << scheduler.summary();
+      } else if (command == "trace") {
+        trace_live(scheduler);
       } else if (command == "summary") std::cout << scheduler.summary();
       else if (command == "quit" || command == "exit") { scheduler.stop(); break; }
       else if (!command.empty()) std::cout << "Unknown command. Type 'help'.\n";

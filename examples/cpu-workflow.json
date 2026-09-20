@@ -3,18 +3,21 @@
     {
       "id": "prime_index",
       "priority": "high",
-      "command": "node -e \"let n=0;for(let x=2;x<180000;x++){let p=1;for(let d=2;d*d<=x;d++)if(x%d===0){p=0;break}n+=p}console.log('primes',n)\""
+      "executable": "node",
+      "args": ["-e", "let n=0;for(let x=2;x<180000;x++){let p=1;for(let d=2;d*d<=x;d++)if(x%d===0){p=0;break}n+=p}console.log('primes',n)"]
     },
     {
       "id": "checksum",
       "priority": "high",
-      "command": "node -e \"let x=0;for(let i=0;i<12000000;i++)x=(x+i*17)%1000003;console.log('checksum',x)\""
+      "executable": "node",
+      "args": ["-e", "let x=0;for(let i=0;i<12000000;i++)x=(x+i*17)%1000003;console.log('checksum',x)"]
     },
     {
       "id": "report",
       "priority": "medium",
       "dependsOn": ["prime_index", "checksum"],
-      "command": "node -e \"console.log('report created from completed CPU jobs')\""
+      "executable": "node",
+      "args": ["-e", "console.log('report created from completed CPU jobs')"]
     }
   ]
 }

@@ -177,6 +177,11 @@ void JobScheduler::wait() {
   work_finished_.wait(lock, [&] { return terminal_locked() || stopping_; });
 }
 
+bool JobScheduler::finished() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return terminal_locked();
+}
+
 void JobScheduler::stop() {
   { std::lock_guard<std::mutex> lock(mutex_);
     if (!stopping_) { stopping_ = true; for (auto& pair : jobs_) if (pair.second.status == Status::Pending || pair.second.status == Status::Blocked || pair.second.status == Status::Ready) pair.second.status = Status::Cancelled; } }
@@ -190,6 +195,11 @@ Status JobScheduler::status(const JobId& id) const { std::lock_guard<std::mutex>
 Job JobScheduler::job(const JobId& id) const { std::lock_guard<std::mutex> lock(mutex_); return jobs_.at(id); }
 std::vector<Job> JobScheduler::jobs() const { std::lock_guard<std::mutex> lock(mutex_); std::vector<Job> result; result.reserve(submission_order_.size()); for (const auto& id : submission_order_) result.push_back(jobs_.at(id)); return result; }
 std::vector<SchedulerEvent> JobScheduler::events() const { std::lock_guard<std::mutex> lock(mutex_); return events_; }
+std::vector<SchedulerEvent> JobScheduler::events_since(std::size_t offset) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (offset >= events_.size()) return {};
+  return {events_.begin() + static_cast<std::ptrdiff_t>(offset), events_.end()};
+}
 Metrics JobScheduler::metrics() const { return metrics_.snapshot(); }
 
 std::string JobScheduler::summary() const {

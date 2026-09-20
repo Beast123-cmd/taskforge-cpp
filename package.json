@@ -1,9 +1,15 @@
 {
   "name": "taskforge-scheduler",
-  "version": "1.0.0",
-  "description": "Local observability console for the TaskForge C++ scheduler",
-  "private": true,
+  "version": "1.1.0",
+  "description": "Local-first workflow scheduler and cross-platform process observatory",
+  "repository": { "type": "git", "url": "git+https://github.com/Beast123-cmd/taskforge-cpp.git" },
+  "bugs": "https://github.com/Beast123-cmd/taskforge-cpp/issues",
+  "keywords": ["scheduler", "workflow", "observability", "cli"],
   "bin": { "taskforge": "bin/taskforge.js" },
-  "scripts": { "start": "node bin/taskforge.js" },
+  "files": ["bin/", "lib/", "src/", "include/", "examples/", "web/", "CMakeLists.txt", "README.md"],
+  "scripts": {
+    "start": "node bin/taskforge.js",
+    "test": "node --test tests/process-collector.test.js tests/terminal-ui.test.js tests/workflow-trace.test.js tests/run-history.test.js tests/workflow-validation.test.js"
+  },
   "engines": { "node": ">=18" }
 }
