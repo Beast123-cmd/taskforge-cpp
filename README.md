@@ -41,6 +41,16 @@ taskforge
 
 Then open `http://localhost:4173`. The dashboard starts the real C++ engine on demand and renders its exported telemetry: dependency flow, job states, scheduler decisions, retry behavior, and measured peak concurrency. It requires Node.js 18+ and a C++17 compiler on the local machine. A registry publication can later replace the GitHub installation URL with `npm install -g taskforge-scheduler`.
 
+## Run real CPU/process workloads
+
+The dashboard can schedule commands from a workflow file rather than the built-in sample:
+
+```sh
+taskforge dev examples/cpu-workflow.json
+```
+
+Each job's `command` runs as a real child process on a C++ worker thread. The dashboard then visualizes actual execution order, dependency waits, and worker concurrency. See [examples/cpu-workflow.json](examples/cpu-workflow.json) for a portable CPU-bound example. Commands are intentionally trusted workflow input; do not run a workflow from an untrusted source.
+
 ## Interactive CLI
 
 `taskforge_demo` opens an interactive prompt; it does not automatically run a fixed workload. Use `help` at the prompt for the full command reference.

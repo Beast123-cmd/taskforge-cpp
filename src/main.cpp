@@ -1,6 +1,7 @@
 #include "JobScheduler.hpp"
 
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -65,6 +66,19 @@ Job make_simulated_job(const std::string& id, Priority priority, int duration_ms
                log_task(id + " attempt " + std::to_string(*attempts));
                std::this_thread::sleep_for(std::chrono::milliseconds(duration_ms));
                return *attempts > failures;
+             }};
+}
+
+// Runs a workflow-authorized command on a scheduler worker. TaskForge does not
+// inspect or execute unrelated operating-system processes.
+Job make_command_job(const std::string& id, Priority priority,
+                     std::vector<JobId> dependencies, unsigned retries,
+                     std::string command) {
+  if (command.empty()) throw std::invalid_argument("command cannot be empty");
+  return Job{id, id, priority, std::move(dependencies), retries, 0, Status::Pending,
+             [id, command = std::move(command)] {
+               log_task(id + " executing: " + command);
+               return std::system(command.c_str()) == 0;
              }};
 }
 
@@ -198,6 +212,8 @@ void print_help() {
   demo                    Load a real-work sample pipeline (before run).
   add <id> <priority> <ms> <deps|-> <failures> <retries>
                           Add a timed job; dependencies are comma-separated.
+  add-command <id> <priority> <deps|-> <retries> <shell command>
+                          Add a real command job that runs on a worker thread.
   list                    Show a dashboard table of all jobs.
   graph                   Show dependency graph and state lifecycle.
   events                  Show the scheduler's timestamped decision audit trail.
@@ -311,6 +327,17 @@ int main() {
         scheduler.add(make_simulated_job(id, parse_priority(priority), duration_ms,
                                          parse_dependencies(dependency_text), failures, retries));
         std::cout << "Added job '" << id << "'. Use list or graph to inspect it.\n";
+      } else if (command == "add-command") {
+        std::string id, priority, dependency_text;
+        unsigned retries;
+        if (!(input >> id >> priority >> dependency_text >> retries))
+          throw std::invalid_argument("usage: add-command <id> <priority> <deps|-> <retries> <shell command>");
+        std::string shell_command;
+        std::getline(input >> std::ws, shell_command);
+        scheduler.add(make_command_job(id, parse_priority(priority),
+                                       parse_dependencies(dependency_text), retries,
+                                       shell_command));
+        std::cout << "Added command job '" << id << "'.\n";
       } else if (command == "run") {
         scheduler.start();
         scheduler.wait();

@@ -15,10 +15,26 @@ function build() {
   if (result.status !== 0) throw new Error(`Could not compile TaskForge. Install a C++17 compiler.\n${result.stderr}`);
 }
 
-function runDemo() {
+const args = process.argv.slice(2);
+const workflowPath = args[0] === 'dev' ? args[1] : undefined;
+
+function workflowInput() {
+  if (!workflowPath) return 'demo\n';
+  const workflow = JSON.parse(readFileSync(workflowPath, 'utf8'));
+  if (!Array.isArray(workflow.jobs)) throw new Error('Workflow JSON requires a jobs array.');
+  return workflow.jobs.map(job => {
+    if (!job.id || !job.command) throw new Error('Every job needs id and command.');
+    const priority = job.priority || 'medium';
+    const dependencies = (job.dependsOn || []).join(',') || '-';
+    const retries = job.retries || 0;
+    return `add-command ${job.id} ${priority} ${dependencies} ${retries} ${job.command}`;
+  }).join('\n') + '\n';
+}
+
+function runEngine() {
   build();
   const file = join(tmpdir(), `taskforge-${process.pid}-${Date.now()}.json`);
-  const result = spawnSync(binary, { input: `demo\nrun\nexport-json ${file}\nquit\n`, encoding: 'utf8' });
+  const result = spawnSync(binary, { input: `${workflowInput()}run\nexport-json ${file}\nquit\n`, encoding: 'utf8' });
   if (result.status !== 0 || !existsSync(file)) throw new Error(result.stderr || 'TaskForge engine did not produce telemetry.');
   const data = JSON.parse(readFileSync(file, 'utf8'));
   unlinkSync(file);
@@ -31,7 +47,7 @@ const server = http.createServer((request, response) => {
     // Create the payload before committing HTTP headers. An engine error can then
     // reliably become one 500 response instead of a second-header crash.
     try {
-      const payload = JSON.stringify(runDemo());
+      const payload = JSON.stringify(runEngine());
       response.writeHead(200, {'Content-Type':'application/json'});
       response.end(payload);
     } catch (error) {
@@ -44,4 +60,4 @@ const server = http.createServer((request, response) => {
   response.end(html);
 });
 
-server.listen(4173, () => console.log('TaskForge dashboard: http://localhost:4173'));
+server.listen(4173, () => console.log(`TaskForge dashboard: http://localhost:4173${workflowPath ? ` (workflow: ${workflowPath})` : ''}`));
