@@ -65,7 +65,12 @@ function dashboard(path) {
 function monitor() {
   if (process.platform !== 'darwin') throw new Error('The initial system monitor targets macOS.');
   const history = new Map();
+  const systemHistory = [];
   const processLabel = process => `${process.pid} ${process.command.split('/').pop().slice(0, 32)} (${process.cpu.toFixed(1)}%)`;
+  const sparkline = values => {
+    const blocks = '▁▂▃▄▅▆▇█';
+    return values.map(value => blocks[Math.min(7, Math.max(0, Math.round(value / 100 * 7)))]).join('');
+  };
   const drawTree = (pid, byPid, children, indent = '', branch = '') => {
     const process = byPid.get(pid);
     if (!process) return;
@@ -85,15 +90,22 @@ function monitor() {
       return { pid: fields[1], ppid: fields[2], cpu: Number(fields[3]), memory: Number(fields[4]), elapsed: fields[5], command: fields[6] };
     }).filter(Boolean);
     const totalCpu = processes.reduce((total, process) => total + process.cpu, 0);
+    const top = spawnSync('top', ['-l', '1', '-n', '0'], { encoding: 'utf8' });
+    const cpuLine = (top.stdout.match(/CPU usage:\s*([\d.]+)% user,\s*([\d.]+)% sys/) || []);
+    const systemCpu = cpuLine.length ? Number(cpuLine[1]) + Number(cpuLine[2]) : 0;
+    systemHistory.push(systemCpu);
+    if (systemHistory.length > 40) systemHistory.shift();
     console.clear();
-    console.log('TASKFORGE · macOS PROCESS MONITOR   (refresh: 2s, Ctrl+C to exit)');
-    console.log(`Visible processes: ${processes.length}   Aggregate CPU: ${totalCpu.toFixed(1)}%`);
-    console.log('─'.repeat(100));
-    console.log(' PID     PPID    CPU%    MEM%    ELAPSED       COMMAND');
+    console.log('╔════════════════════════ TASKFORGE · macOS PROCESS OBSERVATORY ════════════════════════╗');
+    console.log(`║ Live OS sampling · refresh 2s · Ctrl+C exits · processes ${String(processes.length).padStart(4)} · process CPU sum ${totalCpu.toFixed(1).padStart(5)}% ║`);
+    console.log('╚══════════════════════════════════════════════════════════════════════════════════════════╝');
+    console.log(`SYSTEM CPU  ${systemCpu.toFixed(1).padStart(5)}%  ${sparkline(systemHistory).padEnd(40)}  (sampled from macOS top)`);
+    console.log('─'.repeat(110));
+    console.log(' PID     PPID    CPU%    MEM%    ELAPSED       CPU HISTORY   COMMAND');
     for (const process of processes.slice(0, 15)) {
       const samples = [...(history.get(process.pid) || []), process.cpu].slice(-12);
       history.set(process.pid, samples);
-      console.log(`${process.pid.padStart(6)}  ${process.ppid.padStart(6)}  ${process.cpu.toFixed(1).padStart(6)}  ${process.memory.toFixed(1).padStart(6)}  ${process.elapsed.padEnd(12)}  ${process.command.slice(0, 56)}`);
+      console.log(`${process.pid.padStart(6)}  ${process.ppid.padStart(6)}  ${process.cpu.toFixed(1).padStart(6)}  ${process.memory.toFixed(1).padStart(6)}  ${process.elapsed.padEnd(12)}  ${sparkline(samples).padEnd(12)}  ${process.command.slice(0, 48)}`);
     }
     // Keep busy processes plus their ancestors; this is a real PPID topology.
     const byPid = new Map(processes.map(process => [process.pid, process]));
