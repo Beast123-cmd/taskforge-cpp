@@ -37,6 +37,7 @@ ctest --test-dir build --output-on-failure
 ```text
 taskforge> add ingest high 100 - 0 0
 taskforge> add report low 75 ingest 0 0
+taskforge> graph
 taskforge> list
 taskforge> run
 taskforge> status report
@@ -50,6 +51,13 @@ add <id> <high|medium|low> <duration_ms> <dependencies|-> <failures_before_succe
 ```
 
 Use `demo` to opt into a ready-made configuration → database → dataset → report → notification workflow. Its notification job fails once and then succeeds on retry, so retry handling can be observed reproducibly.
+
+The console is also an exploration tool:
+
+- `learn` explains the job lifecycle, graph, queue, workers, retries, and metrics.
+- `list` renders the current jobs as a status table.
+- `graph` renders the dependency relationships and lifecycle transitions before or after execution.
+- `demo` now performs deterministic CPU work (configuration validation, checksum calculation, prime indexing, report assembly) instead of only sleeping. The checksum and index branches run concurrently after configuration completes.
 
 ## Tests
 
