@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 const http = require('http');
-const { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } = require('fs');
+const { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } = require('fs');
 const { spawnSync } = require('child_process');
 const { join } = require('path');
 const { tmpdir } = require('os');
@@ -120,6 +120,11 @@ function monitor() {
   const history = new Map();
   const systemHistory = [];
   const windowsCpu = { time: 0, values: new Map() };
+  const sessionId = `monitor-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  const sessionDirectory = join(process.cwd(), '.taskforge', 'monitor', sessionId);
+  const snapshotsFile = join(sessionDirectory, 'snapshots.jsonl');
+  mkdirSync(sessionDirectory, { recursive: true });
+  writeFileSync(join(sessionDirectory, 'session.json'), JSON.stringify({ id: sessionId, platform: process.platform, startedAt: new Date().toISOString(), status: 'running' }, null, 2));
   const processLabel = process => `${process.pid} ${process.command.split('/').pop().slice(0, 32)} (${process.cpu.toFixed(1)}%)`;
   const sparkline = values => {
     const blocks = '▁▂▃▄▅▆▇█';
@@ -142,6 +147,7 @@ function monitor() {
     const totalCpu = processes.reduce((total, process) => total + process.cpu, 0);
     systemHistory.push(systemCpu);
     if (systemHistory.length > 40) systemHistory.shift();
+    appendFileSync(snapshotsFile, JSON.stringify({ capturedAt: new Date().toISOString(), systemCpu, processCpu: totalCpu, topProcesses: processes.slice(0, 25) }) + '\n');
     console.clear();
     console.log(`╔════════════════════ TASKFORGE · ${process.platform.toUpperCase()} PROCESS OBSERVATORY ════════════════════╗`);
     console.log(`║ Live OS sampling · refresh 2s · Ctrl+C exits · processes ${String(processes.length).padStart(4)} · process CPU sum ${totalCpu.toFixed(1).padStart(5)}% ║`);
@@ -168,10 +174,34 @@ function monitor() {
     const roots = [...included].filter(pid => !included.has(byPid.get(pid).ppid));
     console.log('\nLIVE PROCESS TOPOLOGY  (parent → child relationships from macOS PPID data)');
     roots.sort((a, b) => byPid.get(b).cpu - byPid.get(a).cpu).forEach(root => drawTree(root, byPid, children));
-    console.log('\nThis graph is real OS process ancestry. Logical task dependencies, priorities, and retries exist only for workflows TaskForge launches.');
+    console.log(`\nLive session: .taskforge/monitor/${sessionId}`);
+    console.log('This graph is real OS process ancestry. Logical task dependencies, priorities, and retries exist only for workflows TaskForge launches.');
   };
   render();
-  setInterval(render, 2000);
+  const interval = setInterval(render, 2000);
+  process.on('SIGINT', () => {
+    clearInterval(interval);
+    writeFileSync(join(sessionDirectory, 'session.json'), JSON.stringify({ id: sessionId, platform: process.platform, endedAt: new Date().toISOString(), status: 'completed' }, null, 2));
+    console.log(`\nSaved live monitoring session: ${sessionDirectory}`);
+    process.exit(0);
+  });
+}
+
+function listSessions() {
+  const directory = join(process.cwd(), '.taskforge', 'monitor');
+  if (!existsSync(directory)) return console.log('No monitor sessions recorded yet. Run: taskforge monitor');
+  console.log('MONITOR SESSIONS');
+  for (const session of readdirSync(directory).filter(name => name.startsWith('monitor-')).sort().reverse()) console.log(`  ${session}`);
+}
+
+function inspectSession(id) {
+  if (!/^[A-Za-z0-9._-]+$/.test(id || '')) throw new Error('Invalid session id.');
+  const snapshots = readFileSync(join(process.cwd(), '.taskforge', 'monitor', id, 'snapshots.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+  if (!snapshots.length) throw new Error('Session contains no snapshots.');
+  const first = snapshots[0];
+  const last = snapshots.at(-1);
+  console.log(`SESSION ${id}\nSnapshots: ${snapshots.length}\nStarted: ${first.capturedAt}\nLatest: ${last.capturedAt}\nLatest system CPU: ${last.systemCpu.toFixed(1)}%\n\nLatest busy processes:`);
+  for (const process of last.topProcesses.slice(0, 10)) console.log(`  ${process.pid.padStart(6)}  ${process.cpu.toFixed(1).padStart(6)}%  ${process.command}`);
 }
 
 try {
@@ -182,10 +212,14 @@ try {
     terminalRun(argument);
   } else if (command === 'monitor') {
     monitor();
+  } else if (command === 'sessions') {
+    listSessions();
+  } else if (command === 'inspect' && argument) {
+    inspectSession(argument);
   } else if (command === 'dashboard') {
     dashboard(argument);
   } else {
-    console.log('Usage: taskforge | taskforge run <workflow.json> | taskforge monitor | taskforge dashboard [workflow.json]');
+    console.log('Usage: taskforge | taskforge run <workflow.json> | taskforge monitor | taskforge sessions | taskforge inspect <session-id> | taskforge dashboard [workflow.json]');
     process.exitCode = 1;
   }
 } catch (error) {

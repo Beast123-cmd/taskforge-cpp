@@ -66,6 +66,16 @@ taskforge monitor
 
 The observatory refreshes every two seconds. It shows sampled system CPU, per-process CPU sparklines, busiest processes, memory use, elapsed time, and a real process topology graph.
 
+Each monitor session is persisted while it runs:
+
+```sh
+taskforge monitor
+taskforge sessions
+taskforge inspect monitor-<timestamp>
+```
+
+Snapshots are stored in `.taskforge/monitor/<session-id>/snapshots.jsonl`, so a completed live observation can be inspected without re-running the monitor.
+
 ```text
 [1 launchd]
 ├─ [Google Chrome]
