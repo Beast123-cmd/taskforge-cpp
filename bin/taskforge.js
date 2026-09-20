@@ -7,6 +7,7 @@ const { tmpdir } = require('os');
 
 const root = join(__dirname, '..');
 const binary = join(root, 'build', 'taskforge_demo');
+const [command, argument] = process.argv.slice(2);
 
 function build() {
   if (existsSync(binary)) return;
@@ -15,49 +16,63 @@ function build() {
   if (result.status !== 0) throw new Error(`Could not compile TaskForge. Install a C++17 compiler.\n${result.stderr}`);
 }
 
-const args = process.argv.slice(2);
-const workflowPath = args[0] === 'dev' ? args[1] : undefined;
-
-function workflowInput() {
-  if (!workflowPath) return 'demo\n';
-  const workflow = JSON.parse(readFileSync(workflowPath, 'utf8'));
+function workflowInput(path) {
+  const workflow = JSON.parse(readFileSync(path, 'utf8'));
   if (!Array.isArray(workflow.jobs)) throw new Error('Workflow JSON requires a jobs array.');
   return workflow.jobs.map(job => {
     if (!job.id || !job.command) throw new Error('Every job needs id and command.');
     const priority = job.priority || 'medium';
     const dependencies = (job.dependsOn || []).join(',') || '-';
-    const retries = job.retries || 0;
-    return `add-command ${job.id} ${priority} ${dependencies} ${retries} ${job.command}`;
+    return `add-command ${job.id} ${priority} ${dependencies} ${job.retries || 0} ${job.command}`;
   }).join('\n') + '\n';
 }
 
-function runEngine() {
+function terminalRun(path) {
+  build();
+  const input = `${workflowInput(path)}graph\nrun\ngraph\nevents\nquit\n`;
+  const result = spawnSync(binary, { input, encoding: 'utf8' });
+  process.stdout.write(result.stdout || '');
+  process.stderr.write(result.stderr || '');
+  process.exitCode = result.status || 0;
+}
+
+function telemetry(path) {
   build();
   const file = join(tmpdir(), `taskforge-${process.pid}-${Date.now()}.json`);
-  const result = spawnSync(binary, { input: `${workflowInput()}run\nexport-json ${file}\nquit\n`, encoding: 'utf8' });
+  const input = `${path ? workflowInput(path) : 'demo\n'}run\nexport-json ${file}\nquit\n`;
+  const result = spawnSync(binary, { input, encoding: 'utf8' });
   if (result.status !== 0 || !existsSync(file)) throw new Error(result.stderr || 'TaskForge engine did not produce telemetry.');
   const data = JSON.parse(readFileSync(file, 'utf8'));
   unlinkSync(file);
   return data;
 }
 
-const html = readFileSync(join(root, 'web', 'index.html'));
-const server = http.createServer((request, response) => {
-  if (request.url === '/api/demo') {
-    // Create the payload before committing HTTP headers. An engine error can then
-    // reliably become one 500 response instead of a second-header crash.
-    try {
-      const payload = JSON.stringify(runEngine());
-      response.writeHead(200, {'Content-Type':'application/json'});
-      response.end(payload);
-    } catch (error) {
-      response.writeHead(500, {'Content-Type':'application/json'});
-      response.end(JSON.stringify({error: error.message}));
+function dashboard(path) {
+  const html = readFileSync(join(root, 'web', 'index.html'));
+  http.createServer((request, response) => {
+    if (request.url === '/api/demo') {
+      try { const body = JSON.stringify(telemetry(path)); response.writeHead(200, {'Content-Type':'application/json'}); response.end(body); }
+      catch (error) { response.writeHead(500, {'Content-Type':'application/json'}); response.end(JSON.stringify({error: error.message})); }
+      return;
     }
-    return;
-  }
-  response.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
-  response.end(html);
-});
+    response.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
+    response.end(html);
+  }).listen(4173, () => console.log('Optional dashboard: http://localhost:4173'));
+}
 
-server.listen(4173, () => console.log(`TaskForge dashboard: http://localhost:4173${workflowPath ? ` (workflow: ${workflowPath})` : ''}`));
+try {
+  if (!command) {
+    build();
+    process.exitCode = spawnSync(binary, { cwd: root, stdio: 'inherit' }).status || 0;
+  } else if (command === 'run' && argument) {
+    terminalRun(argument);
+  } else if (command === 'dashboard') {
+    dashboard(argument);
+  } else {
+    console.log('Usage: taskforge | taskforge run <workflow.json> | taskforge dashboard [workflow.json]');
+    process.exitCode = 1;
+  }
+} catch (error) {
+  console.error(`TaskForge: ${error.message}`);
+  process.exitCode = 1;
+}
