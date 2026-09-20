@@ -2,6 +2,7 @@
 #include <atomic>
 #include <cassert>
 #include <chrono>
+#include <condition_variable>
 #include <iostream>
 #include <mutex>
 #include <thread>
@@ -18,5 +19,6 @@ int main(){
  { std::atomic<int> running{0},peak{0};JobScheduler s(3);for(int i=0;i<6;++i)s.add(make(("j"+std::to_string(i)).c_str(),Priority::Medium,{},[&]{auto v=++running;peak=std::max(peak.load(),v);std::this_thread::sleep_for(std::chrono::milliseconds(20));--running;return true;}));s.start();s.wait();assert(peak>1&&s.metrics().peak_running>1); }
  { JobScheduler s(1);s.add(make("a",Priority::High,{},[]{return true;}));s.add(make("b",Priority::High,{"missing"},[]{return true;}));bool threw=false;try{s.start();}catch(const std::invalid_argument&){threw=true;}assert(threw); }
  { JobScheduler s(1);s.add(make("a",Priority::High,{"c"},[]{return true;}));s.add(make("b",Priority::High,{"a"},[]{return true;}));bool threw=false;try{s.add(make("c",Priority::High,{"b"},[]{return true;}));}catch(const std::invalid_argument&){threw=true;}assert(threw); }
+ { std::mutex m;std::condition_variable cv;bool running=false,release=false;JobScheduler s(1);s.add(make("a",Priority::High,{},[&]{std::unique_lock<std::mutex>l(m);running=true;cv.notify_one();cv.wait(l,[&]{return release;});return true;}));s.start();{std::unique_lock<std::mutex>l(m);cv.wait(l,[&]{return running;});release=true;}cv.notify_one();s.stop();assert(s.status("a")==Status::Completed); }
  std::cout<<"All TaskForge tests passed\n";
 }
