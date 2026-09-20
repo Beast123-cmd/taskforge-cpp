@@ -36,6 +36,17 @@ taskforge run examples/cpu-workflow.json
 
 Each command is a real child process executed by a C++ worker thread. The terminal automatically prints the graph before and after execution, job table, metrics, and decision trace.
 
+Every `taskforge run` also creates a durable local record:
+
+```text
+.taskforge/runs/run-<timestamp>/
+├── run.json        workflow identity and final job states
+├── events.jsonl    append-friendly scheduler event history
+└── metrics.json    final aggregate metrics
+```
+
+Events include the responsible worker ID when applicable, allowing the terminal timeline to show which worker ran each task and for how long.
+
 ```json
 {
   "jobs": [

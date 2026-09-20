@@ -38,11 +38,12 @@ JobScheduler::JobScheduler(std::size_t workers, std::unique_ptr<SchedulingStrate
 
 JobScheduler::~JobScheduler() { stop(); }
 
-void JobScheduler::record_event_locked(const Job& job, std::string message) {
+void JobScheduler::record_event_locked(const Job& job, std::string message,
+                                       std::size_t worker_id) {
   events_.push_back({++event_sequence_,
                      std::chrono::duration_cast<std::chrono::milliseconds>(
                          std::chrono::steady_clock::now() - created_at_),
-                     job.id, job.status, std::move(message)});
+                     job.id, job.status, worker_id, std::move(message)});
 }
 
 bool JobScheduler::cycle_if_added_locked(const Job& candidate) const {
@@ -107,7 +108,7 @@ void JobScheduler::start() {
       if (!jobs_.count(dependency)) throw std::invalid_argument("missing dependency for " + pair.first + ": " + dependency);
   started_ = true;
   for (const auto& id : submission_order_) evaluate_locked(id);
-  for (std::size_t i = 0; i < worker_count_; ++i) workers_.emplace_back(&JobScheduler::worker, this);
+  for (std::size_t i = 0; i < worker_count_; ++i) workers_.emplace_back(&JobScheduler::worker, this, i + 1);
 }
 
 bool JobScheduler::terminal_locked() const {
@@ -116,7 +117,7 @@ bool JobScheduler::terminal_locked() const {
   return active_ == 0;
 }
 
-void JobScheduler::worker() {
+void JobScheduler::worker(std::size_t worker_id) {
   for (;;) {
     JobId id;
     JobFunction task;
@@ -129,7 +130,7 @@ void JobScheduler::worker() {
       Job& job = jobs_.at(id);
       if (job.status != Status::Ready) continue;
       job.status = Status::Running;
-      record_event_locked(job, "worker started execution");
+      record_event_locked(job, "worker started execution", worker_id);
       started_at = job.started_at = std::chrono::steady_clock::now();
       ++active_;
       metrics_.started(std::chrono::duration_cast<std::chrono::milliseconds>(started_at - job.submitted_at));
@@ -139,30 +140,31 @@ void JobScheduler::worker() {
     bool success = false;
     try { success = task(); } catch (...) { success = false; }
     const auto ended_at = std::chrono::steady_clock::now();
-    complete(id, success, std::chrono::duration_cast<std::chrono::milliseconds>(ended_at - started_at));
+    complete(id, success, std::chrono::duration_cast<std::chrono::milliseconds>(ended_at - started_at), worker_id);
   }
 }
 
-void JobScheduler::complete(const JobId& id, bool success, std::chrono::milliseconds duration) {
+void JobScheduler::complete(const JobId& id, bool success, std::chrono::milliseconds duration,
+                            std::size_t worker_id) {
   std::lock_guard<std::mutex> lock(mutex_);
   Job& job = jobs_.at(id);
   --active_;
   job.run_time = duration;
   if (success) {
     job.status = Status::Completed;
-    record_event_locked(job, "task completed successfully");
+    record_event_locked(job, "task completed successfully", worker_id);
     metrics_.finished(true, duration);
     for (const auto& child : dependents_[id]) evaluate_locked(child);
   } else if (job.retries < job.max_retries) {
     ++job.retries;
     job.status = Status::Ready;
-    record_event_locked(job, "task failed; retry queued");
+    record_event_locked(job, "task failed; retry queued", worker_id);
     strategy_->push(id, job.priority, order_++);
     metrics_.retried();
     work_available_.notify_one();
   } else {
     job.status = Status::Failed;
-    record_event_locked(job, "task failed; retry limit exhausted");
+    record_event_locked(job, "task failed; retry limit exhausted", worker_id);
     metrics_.finished(false, duration);
     for (const auto& child : dependents_[id]) evaluate_locked(child);
   }

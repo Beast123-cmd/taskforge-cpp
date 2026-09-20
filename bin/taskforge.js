@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 const http = require('http');
-const { existsSync, mkdirSync, readFileSync, unlinkSync } = require('fs');
+const { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } = require('fs');
 const { spawnSync } = require('child_process');
 const { join } = require('path');
 const { tmpdir } = require('os');
@@ -29,10 +29,22 @@ function workflowInput(path) {
 
 function terminalRun(path) {
   build();
-  const input = `${workflowInput(path)}graph\nrun\ngraph\nevents\nquit\n`;
+  const exportFile = join(tmpdir(), `taskforge-${process.pid}-${Date.now()}.json`);
+  const input = `${workflowInput(path)}graph\nrun\ngraph\ntimeline\nevents\nexport-json ${exportFile}\nquit\n`;
   const result = spawnSync(binary, { input, encoding: 'utf8' });
   process.stdout.write(result.stdout || '');
   process.stderr.write(result.stderr || '');
+  if (result.status === 0 && existsSync(exportFile)) {
+    const data = JSON.parse(readFileSync(exportFile, 'utf8'));
+    unlinkSync(exportFile);
+    const runId = `run-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    const runDirectory = join(process.cwd(), '.taskforge', 'runs', runId);
+    mkdirSync(runDirectory, { recursive: true });
+    writeFileSync(join(runDirectory, 'run.json'), JSON.stringify({ id: runId, createdAt: new Date().toISOString(), workflow: path, jobs: data.jobs }, null, 2));
+    writeFileSync(join(runDirectory, 'events.jsonl'), data.events.map(event => JSON.stringify(event)).join('\n') + '\n');
+    writeFileSync(join(runDirectory, 'metrics.json'), JSON.stringify(data.metrics, null, 2));
+    console.log(`Run artifacts saved to ${runDirectory}`);
+  }
   process.exitCode = result.status || 0;
 }
 

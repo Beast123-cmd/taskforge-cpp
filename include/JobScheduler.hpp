@@ -18,6 +18,7 @@ struct SchedulerEvent {
   std::chrono::milliseconds elapsed{0};
   JobId job_id;
   Status status{Status::Pending};
+  std::size_t worker_id{0};  // Zero means the scheduler, not a worker, made the decision.
   std::string message;
 };
 
@@ -45,10 +46,12 @@ class JobScheduler {
   std::string summary() const;
 
  private:
-  void worker();
+  void worker(std::size_t worker_id);
   void evaluate_locked(const JobId& id);
-  void complete(const JobId& id, bool success, std::chrono::milliseconds duration);
-  void record_event_locked(const Job& job, std::string message);
+  void complete(const JobId& id, bool success, std::chrono::milliseconds duration,
+                std::size_t worker_id);
+  void record_event_locked(const Job& job, std::string message,
+                           std::size_t worker_id = 0);
   bool cycle_if_added_locked(const Job& candidate) const;
   bool terminal_locked() const;
 

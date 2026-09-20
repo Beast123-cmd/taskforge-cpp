@@ -9,6 +9,7 @@
 #include <mutex>
 #include <sstream>
 #include <thread>
+#include <unordered_map>
 
 namespace {
 
@@ -147,7 +148,29 @@ void print_events(const std::vector<taskforge::SchedulerEvent>& events) {
               << std::setw(6) << event.elapsed.count() << " ms  "
               << std::left << std::setw(16) << event.job_id.substr(0, 16)
               << std::setw(13) << taskforge::to_string(event.status)
+              << "W" << (event.worker_id ? std::to_string(event.worker_id) : "-") << "  "
               << event.message << '\n';
+  }
+}
+
+void print_timeline(const std::vector<taskforge::SchedulerEvent>& events) {
+  struct Active { std::string job; std::chrono::milliseconds started; };
+  std::unordered_map<std::size_t, Active> active;
+  std::cout << "\nWORKER EXECUTION TIMELINE\n"
+            << " Worker    Start       End     Duration   Job\n"
+            << "------------------------------------------------\n";
+  for (const auto& event : events) {
+    if (event.worker_id == 0) continue;
+    if (event.status == Status::Running) active[event.worker_id] = {event.job_id, event.elapsed};
+    else if ((event.status == Status::Completed || event.status == Status::Failed || event.status == Status::Ready) && active.count(event.worker_id)) {
+      const auto& run = active.at(event.worker_id);
+      std::cout << " W" << std::left << std::setw(7) << event.worker_id
+                << std::right << std::setw(7) << run.started.count() << " ms"
+                << std::setw(8) << event.elapsed.count() << " ms"
+                << std::setw(9) << (event.elapsed - run.started).count() << " ms   "
+                << run.job << '\n';
+      active.erase(event.worker_id);
+    }
   }
 }
 
@@ -201,7 +224,8 @@ void export_json(const JobScheduler& scheduler, const std::string& path) {
     output << "{\"sequence\":" << event.sequence << ",\"elapsedMs\":"
            << event.elapsed.count() << ",\"jobId\":\"" << json_escape(event.job_id)
            << "\",\"state\":\"" << taskforge::to_string(event.status)
-           << "\",\"message\":\"" << json_escape(event.message) << "\"}";
+           << "\",\"workerId\":" << event.worker_id
+           << ",\"message\":\"" << json_escape(event.message) << "\"}";
   }
   output << "],\"metrics\":{\"submitted\":" << metrics.submitted
          << ",\"completed\":" << metrics.completed << ",\"failed\":" << metrics.failed
@@ -218,6 +242,7 @@ void print_help() {
   list                    Show a dashboard table of all jobs.
   graph                   Show dependency graph and state lifecycle.
   events                  Show the scheduler's timestamped decision audit trail.
+  timeline                Show completed work grouped by worker thread.
   export <file.dot>       Export the dependency graph for Graphviz rendering.
   export-json <file.json> Export real scheduler state/events for tooling.
   status <id>             Inspect one job.
@@ -304,6 +329,7 @@ int main() {
       else if (command == "list") print_table(scheduler.jobs());
       else if (command == "graph") print_graph(scheduler.jobs());
       else if (command == "events") print_events(scheduler.events());
+      else if (command == "timeline") print_timeline(scheduler.events());
       else if (command == "export") {
         std::string path;
         if (!(input >> path)) throw std::invalid_argument("usage: export <file.dot>");

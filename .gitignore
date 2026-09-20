@@ -3,3 +3,4 @@ build/
 *.d
 *.exe
 .DS_Store
+.taskforge/
