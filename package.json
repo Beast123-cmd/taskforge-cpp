@@ -1,0 +1,9 @@
+{
+  "name": "taskforge-scheduler",
+  "version": "1.0.0",
+  "description": "Local observability console for the TaskForge C++ scheduler",
+  "private": true,
+  "bin": { "taskforge": "bin/taskforge.js" },
+  "scripts": { "start": "node bin/taskforge.js" },
+  "engines": { "node": ">=18" }
+}

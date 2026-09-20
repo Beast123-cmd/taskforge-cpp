@@ -151,6 +151,48 @@ void export_dot(const std::vector<Job>& jobs, const std::string& path) {
   std::cout << "Wrote Graphviz dependency graph to " << path << ".\n";
 }
 
+std::string json_escape(const std::string& value) {
+  std::string escaped;
+  for (const char character : value) {
+    if (character == '"' || character == '\\') escaped += '\\';
+    escaped += character;
+  }
+  return escaped;
+}
+
+void export_json(const JobScheduler& scheduler, const std::string& path) {
+  std::ofstream output(path);
+  if (!output) throw std::runtime_error("could not write " + path);
+  const auto jobs = scheduler.jobs();
+  const auto events = scheduler.events();
+  const auto metrics = scheduler.metrics();
+  output << "{\"jobs\":[";
+  for (std::size_t i = 0; i < jobs.size(); ++i) {
+    const auto& job = jobs[i];
+    if (i) output << ',';
+    output << "{\"id\":\"" << json_escape(job.id) << "\",\"state\":\""
+           << taskforge::to_string(job.status) << "\",\"priority\":\""
+           << taskforge::to_string(job.priority) << "\",\"dependencies\":[";
+    for (std::size_t index = 0; index < job.dependencies.size(); ++index) {
+      if (index) output << ',';
+      output << "\"" << json_escape(job.dependencies[index]) << "\"";
+    }
+    output << "]}";
+  }
+  output << "],\"events\":[";
+  for (std::size_t i = 0; i < events.size(); ++i) {
+    const auto& event = events[i];
+    if (i) output << ',';
+    output << "{\"sequence\":" << event.sequence << ",\"elapsedMs\":"
+           << event.elapsed.count() << ",\"jobId\":\"" << json_escape(event.job_id)
+           << "\",\"state\":\"" << taskforge::to_string(event.status)
+           << "\",\"message\":\"" << json_escape(event.message) << "\"}";
+  }
+  output << "],\"metrics\":{\"submitted\":" << metrics.submitted
+         << ",\"completed\":" << metrics.completed << ",\"failed\":" << metrics.failed
+         << ",\"retries\":" << metrics.retries << ",\"peakRunning\":" << metrics.peak_running << "}}";
+}
+
 void print_help() {
   std::cout << R"(Commands:
   demo                    Load a real-work sample pipeline (before run).
@@ -160,6 +202,7 @@ void print_help() {
   graph                   Show dependency graph and state lifecycle.
   events                  Show the scheduler's timestamped decision audit trail.
   export <file.dot>       Export the dependency graph for Graphviz rendering.
+  export-json <file.json> Export real scheduler state/events for tooling.
   status <id>             Inspect one job.
   run                     Start workers, execute jobs, and show final metrics.
   summary                 Show live metrics.
@@ -248,6 +291,12 @@ int main() {
         std::string path;
         if (!(input >> path)) throw std::invalid_argument("usage: export <file.dot>");
         export_dot(scheduler.jobs(), path);
+      }
+      else if (command == "export-json") {
+        std::string path;
+        if (!(input >> path)) throw std::invalid_argument("usage: export-json <file.json>");
+        export_json(scheduler, path);
+        std::cout << "Wrote scheduler data to " << path << ".\n";
       }
       else if (command == "status") {
         std::string id;
