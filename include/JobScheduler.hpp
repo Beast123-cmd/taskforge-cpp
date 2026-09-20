@@ -12,6 +12,15 @@
 
 namespace taskforge {
 
+// Immutable audit record emitted whenever the scheduler changes a job's state.
+struct SchedulerEvent {
+  std::uint64_t sequence{};
+  std::chrono::milliseconds elapsed{0};
+  JobId job_id;
+  Status status{Status::Pending};
+  std::string message;
+};
+
 // Coordinates job state, dependency resolution, and worker-thread lifetime.
 class JobScheduler {
  public:
@@ -31,6 +40,7 @@ class JobScheduler {
   Status status(const JobId& id) const;
   Job job(const JobId& id) const;
   std::vector<Job> jobs() const;
+  std::vector<SchedulerEvent> events() const;
   Metrics metrics() const;
   std::string summary() const;
 
@@ -38,6 +48,7 @@ class JobScheduler {
   void worker();
   void evaluate_locked(const JobId& id);
   void complete(const JobId& id, bool success, std::chrono::milliseconds duration);
+  void record_event_locked(const Job& job, std::string message);
   bool cycle_if_added_locked(const Job& candidate) const;
   bool terminal_locked() const;
 
@@ -48,10 +59,13 @@ class JobScheduler {
   std::unordered_map<JobId, Job> jobs_;
   std::unordered_map<JobId, std::vector<JobId>> dependents_;
   std::vector<JobId> submission_order_;
+  std::vector<SchedulerEvent> events_;
   std::unique_ptr<SchedulingStrategy> strategy_;
   std::vector<std::thread> workers_;
   MetricsCollector metrics_;
   std::uint64_t order_{0};
+  std::uint64_t event_sequence_{0};
+  std::chrono::steady_clock::time_point created_at_{std::chrono::steady_clock::now()};
   bool started_{false};
   bool stopping_{false};
   std::size_t active_{0};

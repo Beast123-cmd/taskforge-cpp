@@ -1,6 +1,7 @@
 #include "JobScheduler.hpp"
 
 #include <chrono>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -122,6 +123,34 @@ void print_graph(const std::vector<Job>& jobs) {
             << "                                      -> FAILED -> dependent CANCELLED\n";
 }
 
+void print_events(const std::vector<taskforge::SchedulerEvent>& events) {
+  std::cout << "\nSCHEDULER AUDIT TRAIL\n"
+            << "  #    TIME     JOB              STATE        DECISION\n"
+            << "---------------------------------------------------------------\n";
+  for (const auto& event : events) {
+    std::cout << std::right << std::setw(4) << event.sequence << "  "
+              << std::setw(6) << event.elapsed.count() << " ms  "
+              << std::left << std::setw(16) << event.job_id.substr(0, 16)
+              << std::setw(13) << taskforge::to_string(event.status)
+              << event.message << '\n';
+  }
+}
+
+void export_dot(const std::vector<Job>& jobs, const std::string& path) {
+  std::ofstream output(path);
+  if (!output) throw std::runtime_error("could not write " + path);
+  output << "digraph TaskForge {\n  rankdir=LR;\n  node [shape=box, style=rounded];\n";
+  for (const auto& job : jobs) {
+    output << "  \"" << job.id << "\" [label=\"" << job.id << "\\n"
+           << taskforge::to_string(job.status) << "\"];\n";
+    for (const auto& dependency : job.dependencies) {
+      output << "  \"" << dependency << "\" -> \"" << job.id << "\";\n";
+    }
+  }
+  output << "}\n";
+  std::cout << "Wrote Graphviz dependency graph to " << path << ".\n";
+}
+
 void print_help() {
   std::cout << R"(Commands:
   demo                    Load a real-work sample pipeline (before run).
@@ -129,6 +158,8 @@ void print_help() {
                           Add a timed job; dependencies are comma-separated.
   list                    Show a dashboard table of all jobs.
   graph                   Show dependency graph and state lifecycle.
+  events                  Show the scheduler's timestamped decision audit trail.
+  export <file.dot>       Export the dependency graph for Graphviz rendering.
   status <id>             Inspect one job.
   run                     Start workers, execute jobs, and show final metrics.
   summary                 Show live metrics.
@@ -212,6 +243,12 @@ int main() {
       else if (command == "demo") load_demo(scheduler);
       else if (command == "list") print_table(scheduler.jobs());
       else if (command == "graph") print_graph(scheduler.jobs());
+      else if (command == "events") print_events(scheduler.events());
+      else if (command == "export") {
+        std::string path;
+        if (!(input >> path)) throw std::invalid_argument("usage: export <file.dot>");
+        export_dot(scheduler.jobs(), path);
+      }
       else if (command == "status") {
         std::string id;
         if (!(input >> id)) throw std::invalid_argument("usage: status <id>");

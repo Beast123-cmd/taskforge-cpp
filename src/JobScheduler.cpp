@@ -38,6 +38,13 @@ JobScheduler::JobScheduler(std::size_t workers, std::unique_ptr<SchedulingStrate
 
 JobScheduler::~JobScheduler() { stop(); }
 
+void JobScheduler::record_event_locked(const Job& job, std::string message) {
+  events_.push_back({++event_sequence_,
+                     std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now() - created_at_),
+                     job.id, job.status, std::move(message)});
+}
+
 bool JobScheduler::cycle_if_added_locked(const Job& candidate) const {
   auto edges = dependents_;
   for (const auto& dependency : candidate.dependencies) edges[dependency].push_back(candidate.id);
@@ -65,6 +72,7 @@ void JobScheduler::add(Job job) {
   jobs_.emplace(id, std::move(job));
   submission_order_.push_back(id);
   for (const auto& dependency : jobs_.at(id).dependencies) dependents_[dependency].push_back(id);
+  record_event_locked(jobs_.at(id), "submitted");
   metrics_.submitted();
 }
 
@@ -75,12 +83,18 @@ void JobScheduler::evaluate_locked(const JobId& id) {
     const Status state = jobs_.at(dependency).status;
     if (state == Status::Failed || state == Status::Cancelled) {
       job.status = Status::Cancelled;
+      record_event_locked(job, "cancelled because a dependency did not complete");
       for (const auto& child : dependents_[id]) evaluate_locked(child);
       return;
     }
-    if (state != Status::Completed) { job.status = Status::Blocked; return; }
+    if (state != Status::Completed) {
+      job.status = Status::Blocked;
+      record_event_locked(job, "waiting for dependencies");
+      return;
+    }
   }
   job.status = Status::Ready;
+  record_event_locked(job, "all dependencies satisfied; queued for a worker");
   strategy_->push(id, job.priority, order_++);
   work_available_.notify_one();
 }
@@ -115,6 +129,7 @@ void JobScheduler::worker() {
       Job& job = jobs_.at(id);
       if (job.status != Status::Ready) continue;
       job.status = Status::Running;
+      record_event_locked(job, "worker started execution");
       started_at = job.started_at = std::chrono::steady_clock::now();
       ++active_;
       metrics_.started(std::chrono::duration_cast<std::chrono::milliseconds>(started_at - job.submitted_at));
@@ -135,16 +150,19 @@ void JobScheduler::complete(const JobId& id, bool success, std::chrono::millisec
   job.run_time = duration;
   if (success) {
     job.status = Status::Completed;
+    record_event_locked(job, "task completed successfully");
     metrics_.finished(true, duration);
     for (const auto& child : dependents_[id]) evaluate_locked(child);
   } else if (job.retries < job.max_retries) {
     ++job.retries;
     job.status = Status::Ready;
+    record_event_locked(job, "task failed; retry queued");
     strategy_->push(id, job.priority, order_++);
     metrics_.retried();
     work_available_.notify_one();
   } else {
     job.status = Status::Failed;
+    record_event_locked(job, "task failed; retry limit exhausted");
     metrics_.finished(false, duration);
     for (const auto& child : dependents_[id]) evaluate_locked(child);
   }
@@ -169,6 +187,7 @@ void JobScheduler::stop() {
 Status JobScheduler::status(const JobId& id) const { std::lock_guard<std::mutex> lock(mutex_); return jobs_.at(id).status; }
 Job JobScheduler::job(const JobId& id) const { std::lock_guard<std::mutex> lock(mutex_); return jobs_.at(id); }
 std::vector<Job> JobScheduler::jobs() const { std::lock_guard<std::mutex> lock(mutex_); std::vector<Job> result; result.reserve(submission_order_.size()); for (const auto& id : submission_order_) result.push_back(jobs_.at(id)); return result; }
+std::vector<SchedulerEvent> JobScheduler::events() const { std::lock_guard<std::mutex> lock(mutex_); return events_; }
 Metrics JobScheduler::metrics() const { return metrics_.snapshot(); }
 
 std::string JobScheduler::summary() const {

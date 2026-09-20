@@ -57,6 +57,8 @@ The console is also an exploration tool:
 - `learn` explains the job lifecycle, graph, queue, workers, retries, and metrics.
 - `list` renders the current jobs as a status table.
 - `graph` renders the dependency relationships and lifecycle transitions before or after execution.
+- `events` displays a timestamped audit trail of every scheduler decision, such as blocking, queueing, retries, and completion.
+- `export workflow.dot` produces a Graphviz DOT file that can be rendered with `dot -Tpng workflow.dot -o workflow.png` when Graphviz is installed.
 - `demo` now performs deterministic CPU work (configuration validation, checksum calculation, prime indexing, report assembly) instead of only sleeping. The checksum and index branches run concurrently after configuration completes.
 
 ## Tests
