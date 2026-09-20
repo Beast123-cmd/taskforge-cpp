@@ -24,6 +24,7 @@ std::mutex task_log_mutex;
 void log_task(const std::string& message) {
   std::lock_guard<std::mutex> lock(task_log_mutex);
   std::cout << "[Task] " << message << '\n';
+  std::cout.flush();
 }
 
 Priority parse_priority(const std::string& value) {
