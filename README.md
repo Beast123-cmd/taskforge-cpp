@@ -1,0 +1,55 @@
+# TaskForge
+
+TaskForge is a focused C++17 multithreaded job scheduler: it runs reusable worker threads, honors dependencies, selects ready jobs by priority (FIFO on ties), retries controlled failures, and exposes execution metrics.
+
+## Architecture
+
+```text
+Job submissions --> JobScheduler --> SchedulingStrategy --> worker threads
+       |                 |                 |                    |
+       +--> dependency adjacency list <----+---- status/metrics <-+
+```
+
+`JobScheduler` owns synchronized job state and the dependency adjacency list. A `SchedulingStrategy` owns only ready-job ordering; the supplied priority strategy uses a priority queue and FIFO sequence counter, while `FIFOSchedulingStrategy` ignores priority. Workers sleep on a condition variable and execute functions outside the scheduler lock.
+
+## Features
+
+- PENDING, BLOCKED, READY, RUNNING, COMPLETED, FAILED, and CANCELLED states
+- High/medium/low priority scheduling with deterministic FIFO tie breaking
+- Dependency propagation and DFS cycle rejection; forward dependency references are checked at `start()`
+- Reproducible retry handling and cancellation of work whose dependency permanently failed
+- Thread-safe metrics: submitted/completed/failed/retries, wait/run time, current and peak concurrency
+- Validation for duplicate IDs, missing dependencies, invalid jobs, duplicate starts, and shutdown
+
+## Build and run
+
+```sh
+cmake -S . -B build
+cmake --build build
+./build/taskforge_demo
+ctest --test-dir build --output-on-failure
+```
+
+The demo builds a configuration → database → dataset → report → notification workflow. Notification fails once and then succeeds on retry.
+
+## Tests
+
+The self-contained assert test executable covers priority and FIFO ordering, dependency blocking/resolution, retry and permanent failure behavior, duplicate/missing IDs, cycle detection, metrics, concurrent execution, and shutdown through RAII.
+
+```sh
+./build/taskforge_tests
+```
+
+## Complexity and design notes
+
+Ready selection is `O(log n)` with the priority strategy. Dependency propagation walks only direct dependents; cycle detection is `O(V + E)` per submitted job. A single scheduler mutex protects the graph and state machine, while job functions never run under that mutex. This keeps state transitions straightforward and avoids user code causing scheduler deadlocks.
+
+## Structure
+
+```text
+include/     public job, scheduler, strategy, and metrics APIs
+src/         scheduler implementation and demo
+tests/       deterministic executable test suite
+```
+
+Potential extensions: deadlines, delayed jobs, cancellation tokens, persisted job metadata, and configurable logging.
