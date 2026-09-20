@@ -64,13 +64,26 @@ function dashboard(path) {
 // scheduler jobs, existing processes have no TaskForge dependency metadata.
 function monitor() {
   if (process.platform !== 'darwin') throw new Error('The initial system monitor targets macOS.');
+  const history = new Map();
+  const processLabel = process => `${process.pid} ${process.command.split('/').pop().slice(0, 32)} (${process.cpu.toFixed(1)}%)`;
+  const drawTree = (pid, byPid, children, indent = '', branch = '') => {
+    const process = byPid.get(pid);
+    if (!process) return;
+    console.log(`${indent}${branch}[${processLabel(process)}]`);
+    const descendants = (children.get(pid) || []).sort((a, b) => byPid.get(b).cpu - byPid.get(a).cpu);
+    descendants.forEach((child, index) => {
+      const last = index === descendants.length - 1;
+      drawTree(child, byPid, children, indent + (branch ? (branch === '└─ ' ? '   ' : '│  ') : ''), last ? '└─ ' : '├─ ');
+    });
+  };
   const render = () => {
     const result = spawnSync('ps', ['-Ao', 'pid=,ppid=,pcpu=,pmem=,etime=,comm=', '-r'], { encoding: 'utf8' });
     if (result.status !== 0) throw new Error(result.stderr || 'Could not read the process table.');
     const processes = result.stdout.trim().split('\n').filter(Boolean).map(line => {
-      const fields = line.trim().split(/\s+/, 6);
-      return { pid: fields[0], ppid: fields[1], cpu: Number(fields[2]), memory: Number(fields[3]), elapsed: fields[4], command: fields[5] || '' };
-    });
+      const fields = line.trim().match(/^(\d+)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\S+)\s+(.+)$/);
+      if (!fields) return null;
+      return { pid: fields[1], ppid: fields[2], cpu: Number(fields[3]), memory: Number(fields[4]), elapsed: fields[5], command: fields[6] };
+    }).filter(Boolean);
     const totalCpu = processes.reduce((total, process) => total + process.cpu, 0);
     console.clear();
     console.log('TASKFORGE · macOS PROCESS MONITOR   (refresh: 2s, Ctrl+C to exit)');
@@ -78,11 +91,25 @@ function monitor() {
     console.log('─'.repeat(100));
     console.log(' PID     PPID    CPU%    MEM%    ELAPSED       COMMAND');
     for (const process of processes.slice(0, 15)) {
+      const samples = [...(history.get(process.pid) || []), process.cpu].slice(-12);
+      history.set(process.pid, samples);
       console.log(`${process.pid.padStart(6)}  ${process.ppid.padStart(6)}  ${process.cpu.toFixed(1).padStart(6)}  ${process.memory.toFixed(1).padStart(6)}  ${process.elapsed.padEnd(12)}  ${process.command.slice(0, 56)}`);
     }
-    console.log('\nParent links for the busiest processes:');
-    for (const process of processes.slice(0, 6)) console.log(`  ${process.ppid}  →  ${process.pid}  ${process.command.slice(0, 70)}`);
-    console.log('\nThis is live OS telemetry. TaskForge can observe these processes, but only jobs it launches have dependency/retry decision traces.');
+    // Keep busy processes plus their ancestors; this is a real PPID topology.
+    const byPid = new Map(processes.map(process => [process.pid, process]));
+    const included = new Set();
+    for (const process of processes.slice(0, 10)) {
+      for (let current = process; current && !included.has(current.pid); current = byPid.get(current.ppid)) included.add(current.pid);
+    }
+    const children = new Map();
+    for (const pid of included) {
+      const process = byPid.get(pid);
+      if (included.has(process.ppid)) children.set(process.ppid, [...(children.get(process.ppid) || []), pid]);
+    }
+    const roots = [...included].filter(pid => !included.has(byPid.get(pid).ppid));
+    console.log('\nLIVE PROCESS TOPOLOGY  (parent → child relationships from macOS PPID data)');
+    roots.sort((a, b) => byPid.get(b).cpu - byPid.get(a).cpu).forEach(root => drawTree(root, byPid, children));
+    console.log('\nThis graph is real OS process ancestry. Logical task dependencies, priorities, and retries exist only for workflows TaskForge launches.');
   };
   render();
   setInterval(render, 2000);
