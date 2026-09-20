@@ -1,115 +1,104 @@
 # TaskForge
 
-TaskForge is a focused C++17 multithreaded job scheduler: it runs reusable worker threads, honors dependencies, selects ready jobs by priority (FIFO on ties), retries controlled failures, and exposes execution metrics.
-
-## Architecture
+TaskForge is a local-first C++17 scheduling and concurrency observability tool. It runs dependency-aware command workflows on reusable worker threads, records why every scheduling decision occurred, and provides a cross-platform terminal process observatory.
 
 ```text
-Job submissions --> JobScheduler --> SchedulingStrategy --> worker threads
-       |                 |                 |                    |
-       +--> dependency adjacency list <----+---- status/metrics <-+
+Workflow JSON --> TaskForge CLI --> C++ Scheduler --> worker threads --> command processes
+                      |                 |
+                      |                 +--> dependency DAG / priority queue / event audit trail
+                      +--> live OS process topology and CPU telemetry
 ```
 
-`JobScheduler` owns synchronized job state and the dependency adjacency list. A `SchedulingStrategy` owns only ready-job ordering; the supplied priority strategy uses a priority queue and FIFO sequence counter, while `FIFOSchedulingStrategy` ignores priority. Workers sleep on a condition variable and execute functions outside the scheduler lock.
+## What it does
 
-## Features
+- Priority scheduling with deterministic FIFO ordering for equal priorities
+- Dependency DAGs, cycle detection, blocked-job propagation, retries, and failure cancellation
+- Reusable `std::thread` worker pool with condition-variable wakeups and graceful shutdown
+- Structured scheduler event audit trail: submitted, blocked, ready, running, retrying, failed, completed
+- Terminal graph, status table, execution metrics, and decision timeline for every TaskForge workflow
+- Read-only live process observatory: sampled system CPU, process CPU history, memory use, and parent → child topology
+- macOS, Linux, and Windows process collectors; C++ build/test CI targets all three platforms
 
-- PENDING, BLOCKED, READY, RUNNING, COMPLETED, FAILED, and CANCELLED states
-- High/medium/low priority scheduling with deterministic FIFO tie breaking
-- Dependency propagation and DFS cycle rejection; forward dependency references are checked at `start()`
-- Reproducible retry handling and cancellation of work whose dependency permanently failed
-- Thread-safe metrics: submitted/completed/failed/retries, wait/run time, current and peak concurrency
-- Validation for duplicate IDs, missing dependencies, invalid jobs, duplicate starts, and shutdown
-
-## Build and run
-
-```sh
-cmake -S . -B build
-cmake --build build
-./build/taskforge_demo
-ctest --test-dir build --output-on-failure
-```
-
-## Terminal-first installation (npm)
-
-TaskForge can also be installed as a local developer tool directly from this repository:
+## Install
 
 ```sh
 npm install -g github:Beast123-cmd/taskforge-cpp
 taskforge
 ```
 
-This opens the interactive terminal console. It requires Node.js 18+ and a C++17 compiler. The browser view remains optional: `taskforge dashboard [workflow.json]`.
+This opens the interactive terminal console. It needs Node.js 18+ and a C++17 compiler. Update an existing installation with `npm install -g github:Beast123-cmd/taskforge-cpp --force`.
 
-## Run real CPU/process workloads
-
-Run a workflow in the terminal:
+## Run a real workflow
 
 ```sh
 taskforge run examples/cpu-workflow.json
 ```
 
-Each job's `command` runs as a real child process on a C++ worker thread. The terminal automatically prints the dependency graph before and after execution, the state table, summary metrics, and full scheduler decision timeline. See [examples/cpu-workflow.json](examples/cpu-workflow.json) for a portable CPU-bound example. Commands are intentionally trusted workflow input; do not run a workflow from an untrusted source.
+Each command is a real child process executed by a C++ worker thread. The terminal automatically prints the graph before and after execution, job table, metrics, and decision trace.
 
-## Monitor your Mac's live processes
+```json
+{
+  "jobs": [
+    { "id": "build", "priority": "high", "command": "npm run build" },
+    { "id": "test", "priority": "medium", "dependsOn": ["build"], "retries": 1, "command": "npm test" }
+  ]
+}
+```
 
-To observe processes already running on the host—not a TaskForge demo—run:
+`id` and `command` are required. `priority` defaults to `medium`, `dependsOn` to an empty list, and `retries` to `0`. Commands run through the host shell: only run trusted workflow files.
+
+## Observe the host machine
 
 ```sh
 taskforge monitor
 ```
 
-It supports macOS, Linux, and Windows. It refreshes every two seconds with sampled system CPU, per-process CPU history, top CPU consumers, memory use, elapsed time, and a parent/child process topology graph. Press `Ctrl+C` to stop. This is intentionally read-only. Existing OS processes do not carry TaskForge dependency or retry metadata; those features are available for workflows TaskForge launches itself.
-
-## Interactive CLI
-
-`taskforge_demo` opens an interactive prompt; it does not automatically run a fixed workload. Use `help` at the prompt for the full command reference.
+The observatory refreshes every two seconds. It shows sampled system CPU, per-process CPU sparklines, busiest processes, memory use, elapsed time, and a real process topology graph.
 
 ```text
-taskforge> add ingest high 100 - 0 0
-taskforge> add report low 75 ingest 0 0
+[1 launchd]
+├─ [Google Chrome]
+│  ├─ [Chrome Renderer]
+│  └─ [Chrome Helper]
+└─ [Code]
+   └─ [Code Helper]
+```
+
+This graph is OS ancestry (`parent PID → child PID`), not a fabricated workflow DAG. Existing system processes have no TaskForge priority, retry, or dependency metadata.
+
+| Platform | Process collector | CPU source |
+| --- | --- | --- |
+| macOS | `ps` | `top` |
+| Linux | `ps` | batch `top` |
+| Windows | PowerShell/CIM | `Win32_Processor` |
+
+## Interactive console
+
+```text
+taskforge> help
+taskforge> demo
 taskforge> graph
 taskforge> list
 taskforge> run
-taskforge> status report
-taskforge> summary
+taskforge> events
 ```
 
-The `add` command registers a simulated executable job with this syntax:
+Useful commands: `add`, `add-command`, `list`, `status <id>`, `graph`, `events`, `summary`, `export <file.dot>`, `export-json <file.json>`, and `quit`.
 
-```text
-add <id> <high|medium|low> <duration_ms> <dependencies|-> <failures_before_success> <max_retries>
-```
+The optional browser view is available with `taskforge dashboard [workflow.json]`; the terminal is the primary interface.
 
-Use `demo` to opt into a ready-made configuration → database → dataset → report → notification workflow. Its notification job fails once and then succeeds on retry, so retry handling can be observed reproducibly.
-
-The console is also an exploration tool:
-
-- `learn` explains the job lifecycle, graph, queue, workers, retries, and metrics.
-- `list` renders the current jobs as a status table.
-- `graph` renders the dependency relationships and lifecycle transitions before or after execution.
-- `events` displays a timestamped audit trail of every scheduler decision, such as blocking, queueing, retries, and completion.
-- `export workflow.dot` produces a Graphviz DOT file that can be rendered with `dot -Tpng workflow.dot -o workflow.png` when Graphviz is installed.
-- `demo` now performs deterministic CPU work (configuration validation, checksum calculation, prime indexing, report assembly) instead of only sleeping. The checksum and index branches run concurrently after configuration completes.
-
-## Tests
-
-The self-contained assert test executable covers priority and FIFO ordering, dependency blocking/resolution, retry and permanent failure behavior, duplicate/missing IDs, cycle detection, metrics, concurrent execution, and shutdown through RAII.
+## Build and test
 
 ```sh
-./build/taskforge_tests
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build --output-on-failure
 ```
 
-## Complexity and design notes
+The test executable covers priority/FIFO behavior, dependency resolution and blocking, cycle detection, retries, permanent failures, failure propagation, metrics, concurrent workers, and graceful shutdown. GitHub Actions builds and tests on macOS, Ubuntu, and Windows.
 
-Ready selection is `O(log n)` with the priority strategy. Dependency propagation walks only direct dependents; cycle detection is `O(V + E)` per submitted job. A single scheduler mutex protects the graph and state machine, while job functions never run under that mutex. This keeps state transitions straightforward and avoids user code causing scheduler deadlocks.
+## Design and scope
 
-## Structure
+Ready-job selection is `O(log n)` with the priority queue. Dependency propagation follows only direct dependents; DFS cycle detection is `O(V + E)`. One scheduler mutex protects state transitions, but arbitrary command work runs outside that lock.
 
-```text
-include/     public job, scheduler, strategy, and metrics APIs
-src/         scheduler implementation and demo
-tests/       deterministic executable test suite
-```
-
-Potential extensions: deadlines, delayed jobs, cancellation tokens, persisted job metadata, and configurable logging.
+TaskForge is intentionally local-first: no cloud account, Redis, database, Docker, or remote machine control. The strongest next additions are persisted run replay, pause/cancel controls for TaskForge-owned jobs, interactive terminal filtering, and executable-plus-arguments workflow fields that avoid shell strings.
