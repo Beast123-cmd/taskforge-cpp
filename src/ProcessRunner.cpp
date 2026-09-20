@@ -4,7 +4,6 @@
 #include <vector>
 
 #ifdef _WIN32
-#include <process.h>
 #include <windows.h>
 #else
 #include <spawn.h>
@@ -27,6 +26,29 @@ std::wstring utf8_to_wide(const std::string& value) {
   wide.pop_back();
   return wide;
 }
+
+// Windows receives one command-line string. Quote using the argument rules
+// understood by the Microsoft C runtime (also used by Node.js on Windows).
+std::wstring quote_argument(const std::wstring& value) {
+  std::wstring quoted = L"\"";
+  std::size_t backslashes = 0;
+  for (const wchar_t character : value) {
+    if (character == L'\\') {
+      ++backslashes;
+    } else if (character == L'"') {
+      quoted.append(backslashes * 2 + 1, L'\\');
+      quoted.push_back(L'"');
+      backslashes = 0;
+    } else {
+      quoted.append(backslashes, L'\\');
+      quoted.push_back(character);
+      backslashes = 0;
+    }
+  }
+  quoted.append(backslashes * 2, L'\\');
+  quoted.push_back(L'"');
+  return quoted;
+}
 }  // namespace
 #endif
 
@@ -37,12 +59,27 @@ int run_executable(const std::string& executable,
 #ifdef _WIN32
   const std::wstring program = utf8_to_wide(executable);
   if (program.empty()) return -1;
-  std::vector<std::wstring> values{program};
-  for (const auto& argument : arguments) values.push_back(utf8_to_wide(argument));
-  std::vector<const wchar_t*> argv;
-  for (const auto& value : values) argv.push_back(value.c_str());
-  argv.push_back(nullptr);
-  return static_cast<int>(_wspawnvp(_P_WAIT, program.c_str(), argv.data()));
+  std::wstring command_line = quote_argument(program);
+  for (const auto& argument : arguments) {
+    const std::wstring wide = utf8_to_wide(argument);
+    if (!argument.empty() && wide.empty()) return -1;
+    command_line += L' ';
+    command_line += quote_argument(wide);
+  }
+  if (command_line.size() >= 32767) return -1;
+
+  STARTUPINFOW startup{};
+  startup.cb = sizeof(startup);
+  PROCESS_INFORMATION process{};
+  if (!CreateProcessW(nullptr, command_line.data(), nullptr, nullptr, TRUE, 0,
+                      nullptr, nullptr, &startup, &process)) return -1;
+  CloseHandle(process.hThread);
+  const DWORD wait_result = WaitForSingleObject(process.hProcess, INFINITE);
+  DWORD exit_status = 0;
+  const bool succeeded = wait_result == WAIT_OBJECT_0 &&
+                         GetExitCodeProcess(process.hProcess, &exit_status);
+  CloseHandle(process.hProcess);
+  return succeeded ? static_cast<int>(exit_status) : -1;
 #else
   std::vector<std::string> values{executable};
   values.insert(values.end(), arguments.begin(), arguments.end());

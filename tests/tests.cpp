@@ -14,7 +14,7 @@
 using namespace taskforge;
 static Job make(const char* id, Priority p, std::vector<JobId> deps, JobFunction f, unsigned retries=0){return {id,id,p,std::move(deps),retries,0,Status::Pending,std::move(f)};}
 int main(){
- assert(run_executable("node", {"-e", "process.exit(process.argv[1] === 'a b;$(echo injected)' && process.argv[2] === '' ? 0 : 5)", "a b;$(echo injected)", ""}) == 0);
+ assert(run_executable("node", {"-e", "process.exit(process.argv[1] === 'a b;$(echo injected)' && process.argv[2] === '' && process.argv[3] === 'quote\" slash\\\\' && process.argv[4] === 'a b & %PATH% ^ test' ? 0 : 5)", "a b;$(echo injected)", "", "quote\" slash\\", "a b & %PATH% ^ test"}) == 0);
  assert(run_executable("taskforge-nonexistent-executable", {}) == -1);
  { std::vector<std::string> order;std::mutex m;JobScheduler s(1);auto f=[&](const char* x){return [&,x]{std::lock_guard<std::mutex>l(m);order.push_back(x);return true;};};s.add(make("low",Priority::Low,{},f("low")));s.add(make("high",Priority::High,{},f("high")));s.add(make("medium",Priority::Medium,{},f("medium")));s.start();s.wait();assert((order==std::vector<std::string>{"high","medium","low"})); }
  { std::vector<std::string> o;JobScheduler s(1);auto f=[&](const char* x){return [&,x]{o.push_back(x);return true;};};s.add(make("a",Priority::High,{},f("a")));s.add(make("b",Priority::High,{},f("b")));s.start();s.wait();assert((o==std::vector<std::string>{"a","b"})); }
