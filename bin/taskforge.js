@@ -60,16 +60,46 @@ function dashboard(path) {
   }).listen(4173, () => console.log('Optional dashboard: http://localhost:4173'));
 }
 
+// Read the operating system process table. This is observation-only: unlike
+// scheduler jobs, existing processes have no TaskForge dependency metadata.
+function monitor() {
+  if (process.platform !== 'darwin') throw new Error('The initial system monitor targets macOS.');
+  const render = () => {
+    const result = spawnSync('ps', ['-Ao', 'pid=,ppid=,pcpu=,pmem=,etime=,comm=', '-r'], { encoding: 'utf8' });
+    if (result.status !== 0) throw new Error(result.stderr || 'Could not read the process table.');
+    const processes = result.stdout.trim().split('\n').filter(Boolean).map(line => {
+      const fields = line.trim().split(/\s+/, 6);
+      return { pid: fields[0], ppid: fields[1], cpu: Number(fields[2]), memory: Number(fields[3]), elapsed: fields[4], command: fields[5] || '' };
+    });
+    const totalCpu = processes.reduce((total, process) => total + process.cpu, 0);
+    console.clear();
+    console.log('TASKFORGE · macOS PROCESS MONITOR   (refresh: 2s, Ctrl+C to exit)');
+    console.log(`Visible processes: ${processes.length}   Aggregate CPU: ${totalCpu.toFixed(1)}%`);
+    console.log('─'.repeat(100));
+    console.log(' PID     PPID    CPU%    MEM%    ELAPSED       COMMAND');
+    for (const process of processes.slice(0, 15)) {
+      console.log(`${process.pid.padStart(6)}  ${process.ppid.padStart(6)}  ${process.cpu.toFixed(1).padStart(6)}  ${process.memory.toFixed(1).padStart(6)}  ${process.elapsed.padEnd(12)}  ${process.command.slice(0, 56)}`);
+    }
+    console.log('\nParent links for the busiest processes:');
+    for (const process of processes.slice(0, 6)) console.log(`  ${process.ppid}  →  ${process.pid}  ${process.command.slice(0, 70)}`);
+    console.log('\nThis is live OS telemetry. TaskForge can observe these processes, but only jobs it launches have dependency/retry decision traces.');
+  };
+  render();
+  setInterval(render, 2000);
+}
+
 try {
   if (!command) {
     build();
     process.exitCode = spawnSync(binary, { cwd: root, stdio: 'inherit' }).status || 0;
   } else if (command === 'run' && argument) {
     terminalRun(argument);
+  } else if (command === 'monitor') {
+    monitor();
   } else if (command === 'dashboard') {
     dashboard(argument);
   } else {
-    console.log('Usage: taskforge | taskforge run <workflow.json> | taskforge dashboard [workflow.json]');
+    console.log('Usage: taskforge | taskforge run <workflow.json> | taskforge monitor | taskforge dashboard [workflow.json]');
     process.exitCode = 1;
   }
 } catch (error) {

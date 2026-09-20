@@ -51,6 +51,16 @@ taskforge run examples/cpu-workflow.json
 
 Each job's `command` runs as a real child process on a C++ worker thread. The terminal automatically prints the dependency graph before and after execution, the state table, summary metrics, and full scheduler decision timeline. See [examples/cpu-workflow.json](examples/cpu-workflow.json) for a portable CPU-bound example. Commands are intentionally trusted workflow input; do not run a workflow from an untrusted source.
 
+## Monitor your Mac's live processes
+
+To observe processes already running on the Mac—not a TaskForge demo—run:
+
+```sh
+taskforge monitor
+```
+
+It refreshes every two seconds with the live process count, aggregate CPU, top CPU consumers, memory use, elapsed time, and parent PID links. Press `Ctrl+C` to stop. This is intentionally read-only. Existing OS processes do not carry TaskForge dependency or retry metadata; those features are available for workflows TaskForge launches itself.
+
 ## Interactive CLI
 
 `taskforge_demo` opens an interactive prompt; it does not automatically run a fixed workload. Use `help` at the prompt for the full command reference.
