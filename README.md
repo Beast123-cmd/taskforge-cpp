@@ -30,7 +30,26 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-The demo builds a configuration → database → dataset → report → notification workflow. Notification fails once and then succeeds on retry.
+## Interactive CLI
+
+`taskforge_demo` opens an interactive prompt; it does not automatically run a fixed workload. Use `help` at the prompt for the full command reference.
+
+```text
+taskforge> add ingest high 100 - 0 0
+taskforge> add report low 75 ingest 0 0
+taskforge> list
+taskforge> run
+taskforge> status report
+taskforge> summary
+```
+
+The `add` command registers a simulated executable job with this syntax:
+
+```text
+add <id> <high|medium|low> <duration_ms> <dependencies|-> <failures_before_success> <max_retries>
+```
+
+Use `demo` to opt into a ready-made configuration → database → dataset → report → notification workflow. Its notification job fails once and then succeeds on retry, so retry handling can be observed reproducibly.
 
 ## Tests
 

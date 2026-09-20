@@ -5,6 +5,8 @@
 
 namespace taskforge {
 struct Metrics { std::size_t submitted{}, completed{}, failed{}, retries{}, running{}, peak_running{}; std::chrono::milliseconds total_wait{0}, total_run{0}; };
+
+// Owns a separate mutex so metric reads do not expose scheduler internals.
 class MetricsCollector {
   mutable std::mutex mutex_; Metrics data_;
  public:

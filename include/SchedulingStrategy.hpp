@@ -11,6 +11,8 @@ class SchedulingStrategy {
   virtual JobId pop() = 0;
   virtual bool empty() const = 0;
 };
+
+// Ready jobs are sorted by priority; the submission sequence preserves FIFO ties.
 class PrioritySchedulingStrategy final : public SchedulingStrategy {
   struct Entry { JobId id; Priority priority; std::uint64_t order; };
   struct Compare { bool operator()(const Entry& a, const Entry& b) const { return a.priority != b.priority ? a.priority < b.priority : a.order > b.order; } };
