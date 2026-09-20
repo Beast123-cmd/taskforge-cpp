@@ -53,13 +53,13 @@ Each job's `command` runs as a real child process on a C++ worker thread. The te
 
 ## Monitor your Mac's live processes
 
-To observe processes already running on the Mac—not a TaskForge demo—run:
+To observe processes already running on the host—not a TaskForge demo—run:
 
 ```sh
 taskforge monitor
 ```
 
-It refreshes every two seconds with the live process count, aggregate CPU, top CPU consumers, memory use, elapsed time, and parent PID links. Press `Ctrl+C` to stop. This is intentionally read-only. Existing OS processes do not carry TaskForge dependency or retry metadata; those features are available for workflows TaskForge launches itself.
+It supports macOS, Linux, and Windows. It refreshes every two seconds with sampled system CPU, per-process CPU history, top CPU consumers, memory use, elapsed time, and a parent/child process topology graph. Press `Ctrl+C` to stop. This is intentionally read-only. Existing OS processes do not carry TaskForge dependency or retry metadata; those features are available for workflows TaskForge launches itself.
 
 ## Interactive CLI
 

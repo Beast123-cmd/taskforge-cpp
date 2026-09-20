@@ -60,12 +60,54 @@ function dashboard(path) {
   }).listen(4173, () => console.log('Optional dashboard: http://localhost:4173'));
 }
 
+function parsePs(output) {
+  return output.trim().split('\n').filter(Boolean).map(line => {
+    const fields = line.trim().match(/^(\d+)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\S+)\s+(.+)$/);
+    return fields && { pid: fields[1], ppid: fields[2], cpu: Number(fields[3]), memory: Number(fields[4]), elapsed: fields[5], command: fields[6] };
+  }).filter(Boolean);
+}
+
+function macSample() {
+  const ps = spawnSync('ps', ['-Ao', 'pid=,ppid=,pcpu=,pmem=,etime=,comm=', '-r'], { encoding: 'utf8' });
+  const top = spawnSync('top', ['-l', '1', '-n', '0'], { encoding: 'utf8' });
+  if (ps.status !== 0) throw new Error(ps.stderr || 'Could not read macOS processes.');
+  const match = top.stdout.match(/CPU usage:\s*([\d.]+)% user,\s*([\d.]+)% sys/);
+  return { processes: parsePs(ps.stdout), systemCpu: match ? Number(match[1]) + Number(match[2]) : 0 };
+}
+
+function linuxSample() {
+  const ps = spawnSync('ps', ['-eo', 'pid=,ppid=,pcpu=,pmem=,etime=,comm=', '--sort=-pcpu'], { encoding: 'utf8' });
+  const top = spawnSync('top', ['-bn1'], { encoding: 'utf8' });
+  if (ps.status !== 0) throw new Error(ps.stderr || 'Could not read Linux processes.');
+  const match = top.stdout.match(/%Cpu\(s\):\s*([\d.]+)\s*us,\s*([\d.]+)\s*sy/);
+  return { processes: parsePs(ps.stdout), systemCpu: match ? Number(match[1]) + Number(match[2]) : 0 };
+}
+
+function windowsSample(previousCpu) {
+  const shell = process.env.ComSpec ? 'powershell.exe' : 'powershell';
+  const script = "$cpu=(Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average; Get-CimInstance Win32_Process | ForEach-Object {$p=Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; if($p){[PSCustomObject]@{pid=$_.ProcessId;ppid=$_.ParentProcessId;cpu=$p.CPU;memory=[math]::Round($p.WorkingSet64/1MB,1);command=$_.Name;systemCpu=$cpu}}} | ConvertTo-Json -Compress";
+  const result = spawnSync(shell, ['-NoProfile', '-Command', script], { encoding: 'utf8' });
+  if (result.status !== 0) throw new Error(result.stderr || 'Could not read Windows processes.');
+  const raw = JSON.parse(result.stdout || '[]');
+  const rows = Array.isArray(raw) ? raw : [raw];
+  const now = Date.now();
+  const elapsedSeconds = previousCpu.time ? Math.max(0.1, (now - previousCpu.time) / 1000) : 1;
+  const processes = rows.map(row => {
+    const prior = previousCpu.values.get(String(row.pid)) || Number(row.cpu || 0);
+    const cpu = previousCpu.time ? Math.max(0, (Number(row.cpu || 0) - prior) / elapsedSeconds * 100) : 0;
+    previousCpu.values.set(String(row.pid), Number(row.cpu || 0));
+    return { pid: String(row.pid), ppid: String(row.ppid), cpu, memory: Number(row.memory || 0), elapsed: '-', command: row.command };
+  }).sort((a, b) => b.cpu - a.cpu);
+  previousCpu.time = now;
+  return { processes, systemCpu: Number(rows[0]?.systemCpu || 0) };
+}
+
 // Read the operating system process table. This is observation-only: unlike
 // scheduler jobs, existing processes have no TaskForge dependency metadata.
 function monitor() {
-  if (process.platform !== 'darwin') throw new Error('The initial system monitor targets macOS.');
   const history = new Map();
   const systemHistory = [];
+  const windowsCpu = { time: 0, values: new Map() };
   const processLabel = process => `${process.pid} ${process.command.split('/').pop().slice(0, 32)} (${process.cpu.toFixed(1)}%)`;
   const sparkline = values => {
     const blocks = '▁▂▃▄▅▆▇█';
@@ -82,24 +124,17 @@ function monitor() {
     });
   };
   const render = () => {
-    const result = spawnSync('ps', ['-Ao', 'pid=,ppid=,pcpu=,pmem=,etime=,comm=', '-r'], { encoding: 'utf8' });
-    if (result.status !== 0) throw new Error(result.stderr || 'Could not read the process table.');
-    const processes = result.stdout.trim().split('\n').filter(Boolean).map(line => {
-      const fields = line.trim().match(/^(\d+)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\S+)\s+(.+)$/);
-      if (!fields) return null;
-      return { pid: fields[1], ppid: fields[2], cpu: Number(fields[3]), memory: Number(fields[4]), elapsed: fields[5], command: fields[6] };
-    }).filter(Boolean);
+    const sample = process.platform === 'darwin' ? macSample() : process.platform === 'linux' ? linuxSample() : process.platform === 'win32' ? windowsSample(windowsCpu) : null;
+    if (!sample) throw new Error(`Unsupported platform: ${process.platform}`);
+    const { processes, systemCpu } = sample;
     const totalCpu = processes.reduce((total, process) => total + process.cpu, 0);
-    const top = spawnSync('top', ['-l', '1', '-n', '0'], { encoding: 'utf8' });
-    const cpuLine = (top.stdout.match(/CPU usage:\s*([\d.]+)% user,\s*([\d.]+)% sys/) || []);
-    const systemCpu = cpuLine.length ? Number(cpuLine[1]) + Number(cpuLine[2]) : 0;
     systemHistory.push(systemCpu);
     if (systemHistory.length > 40) systemHistory.shift();
     console.clear();
-    console.log('╔════════════════════════ TASKFORGE · macOS PROCESS OBSERVATORY ════════════════════════╗');
+    console.log(`╔════════════════════ TASKFORGE · ${process.platform.toUpperCase()} PROCESS OBSERVATORY ════════════════════╗`);
     console.log(`║ Live OS sampling · refresh 2s · Ctrl+C exits · processes ${String(processes.length).padStart(4)} · process CPU sum ${totalCpu.toFixed(1).padStart(5)}% ║`);
     console.log('╚══════════════════════════════════════════════════════════════════════════════════════════╝');
-    console.log(`SYSTEM CPU  ${systemCpu.toFixed(1).padStart(5)}%  ${sparkline(systemHistory).padEnd(40)}  (sampled from macOS top)`);
+    console.log(`SYSTEM CPU  ${systemCpu.toFixed(1).padStart(5)}%  ${sparkline(systemHistory).padEnd(40)}  (live OS sample)`);
     console.log('─'.repeat(110));
     console.log(' PID     PPID    CPU%    MEM%    ELAPSED       CPU HISTORY   COMMAND');
     for (const process of processes.slice(0, 15)) {
